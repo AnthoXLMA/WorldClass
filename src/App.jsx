@@ -1,7 +1,7 @@
-// src/App.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { Menu } from "lucide-react";
+import debounce from "lodash.debounce";
 
 // Layout & UI
 import Sidebar from "./components/Sidebar";
@@ -16,9 +16,9 @@ import ProfileCard from "./pages/ProfileCard";
 import ComparisonChart from "./pages/ComparisonChart";
 import SimulationResults from "./pages/SimulationResults";
 import AboutText from "./pages/AboutText";
+import CTAButton from "./pages/CTAButton";
 
 function App() {
-  // --- États utilisateur ---
   const [income, setIncome] = useState(50000);
   const [wealth, setWealth] = useState(100000);
   const [user, setUser] = useState({
@@ -29,46 +29,57 @@ function App() {
     country: "France",
   });
 
-  // --- Données API (séparées revenus / patrimoine) ---
   const [incomeFR, setIncomeFR] = useState([]);
   const [wealthFR, setWealthFR] = useState([]);
   const [incomeWorld, setIncomeWorld] = useState([]);
   const [wealthWorld, setWealthWorld] = useState([]);
 
-  // --- États UI ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [country, setCountry] = useState("FR");
   const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  // Charger les distributions au montage
+  // Charger les distributions
   useEffect(() => {
-  fetch("http://127.0.0.1:8000/distributions/FR")
-    .then(res => res.json())
-    .then(fr => {
-      setIncomeFR(fr.income);
-      setWealthFR(fr.wealth);
-    });
+    fetch("http://127.0.0.1:8000/distributions/FR")
+      .then(res => res.json())
+      .then(fr => {
+        setIncomeFR(fr.income);
+        setWealthFR(fr.wealth);
+      });
 
-  fetch("http://127.0.0.1:8000/distributions/World")
-    .then(res => res.json())
-    .then(world => {
-      setIncomeWorld(world.income);
-      setWealthWorld(world.wealth);
-    });
-}, []);
+    fetch("http://127.0.0.1:8000/distributions/World")
+      .then(res => res.json())
+      .then(world => {
+        setIncomeWorld(world.income);
+        setWealthWorld(world.wealth);
+      });
+  }, []);
 
+  // Fonction de calcul percentile
+  const fetchResult = async (incomeVal, wealthVal) => {
+    setLoading(true);
+    try {
+      const res = await fetch("http://127.0.0.1:8000/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ income: incomeVal, wealth: wealthVal }),
+      });
+      const json = await res.json();
+      setResult(json);
+    } catch (err) {
+      console.error(err);
+    }
+    setLoading(false);
+  };
 
-  // Recalculer résultats quand sliders changent
+  // Debounced version pour recalcul automatique
+  const debouncedFetchResult = useCallback(debounce(fetchResult, 300), []);
+
+  // Recalcul automatique à chaque changement de slider
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/calculate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ income, wealth }),
-    })
-      .then((res) => res.json())
-      .then((json) => setResult(json))
-      .catch(console.error);
-  }, [income, wealth]);
+    debouncedFetchResult(income, wealth);
+  }, [income, wealth, debouncedFetchResult]);
 
   return (
     <Router>
@@ -84,7 +95,6 @@ function App() {
           />
         )}
 
-        {/* Contenu principal */}
         <main className="flex-1 flex flex-col overflow-auto">
           {/* Topbar mobile */}
           <header className="flex items-center justify-between p-4 sm:hidden bg-white shadow-md">
@@ -98,41 +108,84 @@ function App() {
             <div />
           </header>
 
-          {/* Routes */}
           <div className="p-6 space-y-6">
             <Routes>
-              {/* Accueil */}
               <Route
                 path="/"
                 element={
                   <div className="space-y-6">
-                    <Sliders
-                      income={income}
-                      setIncome={setIncome}
-                      wealth={wealth}
-                      setWealth={setWealth}
-                    />
-                    <Results result={result} />
-                    <CountrySelector country={country} setCountry={setCountry} />
+                    {/* Résumé rapide */}
+                    {result && (
+                      <div className={`rounded-2xl shadow-md p-4 text-center ${result.class_country === "Classe aisée" ? "bg-green-600 text-white" : result.class_country.includes("supérieure") ? "bg-blue-600 text-white" : result.class_country.includes("moyenne") ? "bg-yellow-500 text-white" : "bg-red-500 text-white"}`}>
+                        <p className="text-lg">
+                          Vous gagnez plus que{" "}
+                          <span className="font-bold">
+                            {Math.round(result.income_percentile_country * 100)}%
+                          </span>{" "}
+                          des Français.
+                        </p>
+                        <p className="text-sm opacity-90">
+                          Classe sociale estimée :{" "}
+                          <span className="font-semibold">{result.class_country}</span>
+                        </p>
+                      </div>
+                    )}
 
-                    {/* Graphiques séparés */}
-                    <IncomeChart
-                      dataFR={incomeFR}
-                      dataWorld={incomeWorld}
-                      result={result}
-                      country={country}
-                    />
+                    <div className="grid lg:grid-cols-2 gap-6">
+                      <div className="space-y-6">
+                        <Sliders
+                          income={income}
+                          setIncome={setIncome}
+                          wealth={wealth}
+                          setWealth={setWealth}
+                        />
 
-                    <WealthChart
-                      dataFR={wealthFR}
-                      dataWorld={wealthWorld}
-                      result={result}
-                      country={country}
-                    />
+                        <CTAButton
+                          text={loading ? "⏳ Calcul en cours..." : "Recalculer"}
+                          onClick={() => fetchResult(income, wealth)}
+                        />
+
+                        <Results result={result} />
+                        <CountrySelector country={country} setCountry={setCountry} />
+                      </div>
+
+                      <div className="space-y-6">
+                        <ComparisonChart
+                          data1={incomeFR}
+                          data2={incomeWorld}
+                          label1="France"
+                          label2="Monde"
+                          userIncome={income}
+                        />
+
+                        <IncomeChart
+                          dataFR={incomeFR}
+                          dataWorld={incomeWorld}
+                          result={result}
+                          country={country}
+                          highlightIncome={income}
+                        />
+
+                        <WealthChart
+                          dataFR={wealthFR}
+                          dataWorld={wealthWorld}
+                          result={result}
+                          country={country}
+                          highlightWealth={wealth}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Sticky CTA mobile */}
+                    <div className="sm:hidden fixed bottom-4 right-4 z-50">
+                      <CTAButton
+                        text={loading ? "⏳ Calcul en cours..." : "Calculer"}
+                        onClick={() => fetchResult(income, wealth)}
+                      />
+                    </div>
                   </div>
                 }
               />
-              {/* Autres pages */}
               <Route path="/profil" element={<ProfileCard user={user} />} />
               <Route path="/comparisons" element={<ComparisonChart />} />
               <Route path="/simulations" element={<SimulationResults />} />

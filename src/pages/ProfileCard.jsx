@@ -3,7 +3,7 @@ export default function ProfileCard({ user }) {
   if (!user) {
     return (
       <div className="bg-white rounded-3xl shadow-lg p-6 text-center">
-        Chargement du profil...
+        Chargement du profil.
       </div>
     );
   }
